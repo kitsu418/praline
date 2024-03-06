@@ -1,0 +1,78 @@
+[
+    { 
+      "children": [
+        [
+          {
+            "attributes": [
+              1,
+              2
+            ],
+            "relation_name": "edge"
+          }
+        ]
+      ],
+      "parent": {
+        "attributes": [
+          1,
+          2
+        ],
+        "relation_name": "path"
+      }
+    },
+    {
+      "children": [
+        [
+          {
+            "attributes": [
+              1,
+              2
+            ],
+            "relation_name": "path"
+          },
+          {
+            "attributes": [
+              2,
+              3
+            ],
+            "relation_name": "edge"
+          }
+        ],
+        [
+          {
+            "attributes": [
+              1,
+              3
+            ],
+            "relation_name": "path"
+          }
+        ]
+      ],
+      "parent": {
+        "attributes": [
+          1,
+          3
+        ],
+        "relation_name": "path"
+      }
+    },
+    {
+      "children": [
+        [
+          {
+            "attributes": [
+              2,
+              3
+            ],
+            "relation_name": "edge"
+          }
+        ]
+      ],
+      "parent": {
+        "attributes": [
+          2,
+          3
+        ],
+        "relation_name": "path"
+      }
+    }
+  ]
