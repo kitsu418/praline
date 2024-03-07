@@ -1,6 +1,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::Load;
+
 #[derive(Serialize, Deserialize, Debug, Ord, PartialEq, PartialOrd, Eq, Clone)]
 pub struct Literal {
     relation_name: String,
@@ -19,10 +21,10 @@ impl Literal {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Derivation {
-    parent: Literal,
-    children: Disjunction,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Derivation {
+    pub parent: Literal,
+    pub children: Disjunction,
 }
 
 impl Derivation {
@@ -30,7 +32,7 @@ impl Derivation {
         Derivation { parent, children }
     }
 
-    fn try_from_json(path: &str) -> Result<Vec<Self>> {
+    pub fn try_from_json(path: &str) -> Result<Vec<Self>> {
         let json_file = std::fs::File::open(path)?;
         let json_reader = std::io::BufReader::new(json_file);
         let derivations: Vec<Derivation> = serde_json::from_reader(json_reader)?;

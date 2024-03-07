@@ -5,22 +5,32 @@ use std::collections::BTreeMap;
 use walkdir::WalkDir;
 
 #[derive(Debug)]
-struct Probability {
-    lower_bound: f32,
-    upper_bound: f32,
+pub struct Probability {
+    lower_bound: f64,
+    upper_bound: f64,
 }
 
-type ProbabilityMap = BTreeMap<Literal, Probability>;
+pub type ProbabilityMap = BTreeMap<Literal, Probability>;
 
 impl Probability {
-    fn new(lower_bound: f32, upper_bound: f32) -> Self {
+    pub const ZERO: Probability = Probability {
+        lower_bound: 0.0,
+        upper_bound: 0.0,
+    };
+
+    pub const ONE: Probability = Probability {
+        lower_bound: 1.0,
+        upper_bound: 1.0,
+    };
+
+    fn new(lower_bound: f64, upper_bound: f64) -> Self {
         Probability {
             lower_bound,
             upper_bound,
         }
     }
 
-    fn conjunction(&self, operand: &Probability) -> Probability {
+    pub fn conjunction(&self, operand: &Probability) -> Probability {
         let lower_bound = 1.0
             - operand.upper_bound.min(1.0 - self.lower_bound)
             - self.upper_bound.min(1.0 - operand.lower_bound)
@@ -29,13 +39,13 @@ impl Probability {
         Probability::new(lower_bound, upper_bound)
     }
 
-    fn disjunction(&self, operand: &Probability) -> Probability {
+    pub fn disjunction(&self, operand: &Probability) -> Probability {
         let lower_bound = self.lower_bound.max(operand.lower_bound);
-        let upper_bound = 1.0_f32.min(self.upper_bound + operand.upper_bound);
+        let upper_bound = 1.0_f64.min(self.upper_bound + operand.upper_bound);
         Probability::new(lower_bound, upper_bound)
     }
 
-    fn try_from_csv(path: &str) -> Result<ProbabilityMap> {
+    pub fn try_from_csv(path: &str) -> Result<ProbabilityMap> {
         let mut reader = csv::Reader::from_path(path)?;
         let map: ProbabilityMap = reader
             .records()
@@ -54,12 +64,12 @@ impl Probability {
                     let lower_bound = record
                         .get(record.len() - 2)
                         .expect("Missing lower bound")
-                        .parse::<f32>()
+                        .parse::<f64>()
                         .expect("Invalid lower bound");
                     let upper_bound = record
                         .get(record.len() - 1)
                         .expect("Missing upper bound")
-                        .parse::<f32>()
+                        .parse::<f64>()
                         .expect("Invalid upper bound");
                     let probability = Probability::new(lower_bound, upper_bound);
 
@@ -93,7 +103,7 @@ impl Probability {
 mod tests {
     use super::*;
     #[test]
-    fn test_try_from_csv_path() -> Result<()> {
+    fn test_try_from_csv() -> Result<()> {
         let path = "tests/probability/edge.csv";
         let map = Probability::try_from_csv(path)?;
         println!("{:?}", map);
@@ -101,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_from_dir_path() -> Result<()> {
+    fn test_try_from_dir() -> Result<()> {
         let path = "tests/probability";
         let map = Probability::try_from_dir(path)?;
         println!("{:?}", map);
