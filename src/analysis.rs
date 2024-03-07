@@ -2,22 +2,21 @@ use std::collections::VecDeque;
 
 use crate::derivation::Derivation;
 use crate::probability::{Probability, ProbabilityMap};
-use anyhow::Result;
 
-struct Analysis {
+pub struct Analysis {
     derivations: Vec<Derivation>,
-    probability_map: ProbabilityMap,
+    pub probability_map: ProbabilityMap,
 }
 
 impl Analysis {
-    fn new(derivations: Vec<Derivation>, probability_map: ProbabilityMap) -> Self {
+    pub fn new(derivations: Vec<Derivation>, probability_map: ProbabilityMap) -> Self {
         Analysis {
             derivations,
             probability_map,
         }
     }
 
-    fn calculate_probability(&mut self) {
+    pub fn calculate_probability(&mut self) {
         let mut worklist: VecDeque<&Derivation> = self
             .derivations
             .iter()
@@ -51,6 +50,8 @@ impl Analysis {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
+
     #[test]
     fn test_calculate_probability() -> Result<()> {
         let derivations = Derivation::try_from_json("tests/derivation.json").unwrap();

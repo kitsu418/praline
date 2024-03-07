@@ -1,10 +1,11 @@
 use crate::derivation::Literal;
 use anyhow::Result;
 use csv;
+use serde::Serialize;
 use std::collections::BTreeMap;
 use walkdir::WalkDir;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Probability {
     lower_bound: f64,
     upper_bound: f64,
@@ -80,7 +81,7 @@ impl Probability {
         Ok(map)
     }
 
-    fn try_from_dir(path: &str) -> Result<ProbabilityMap> {
+    pub fn try_from_dir(path: &str) -> Result<ProbabilityMap> {
         let map = WalkDir::new(path)
             .into_iter()
             .fold(ProbabilityMap::new(), |mut acc, entry| {

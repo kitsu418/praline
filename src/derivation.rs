@@ -26,10 +26,6 @@ pub struct Derivation {
 }
 
 impl Derivation {
-    fn new(parent: Literal, children: Disjunction) -> Self {
-        Derivation { parent, children }
-    }
-
     pub fn try_from_json(path: &str) -> Result<Vec<Self>> {
         let json_file = std::fs::File::open(path)?;
         let json_reader = std::io::BufReader::new(json_file);
