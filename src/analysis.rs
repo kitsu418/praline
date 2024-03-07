@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::derivation::{self, Derivation};
+use crate::derivation::Derivation;
 use crate::probability::{Probability, ProbabilityMap};
 use anyhow::Result;
 
@@ -34,7 +34,7 @@ impl Analysis {
                             .try_fold(Probability::ONE, |acc, literal| {
                                 self.probability_map
                                     .get(literal)
-                                    .map_or(Err(()), |p| Ok(acc.conjunction(&p)))
+                                    .map_or(Err(()), |p| Ok(acc.conjunction(p)))
                             })
                             .map_or(Err(()), |p| Ok(acc.disjunction(&p)))
                     })

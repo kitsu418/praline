@@ -85,12 +85,10 @@ impl Probability {
             .into_iter()
             .fold(ProbabilityMap::new(), |mut acc, entry| {
                 if let Ok(entry) = entry {
-                    if entry.file_type().is_file() {
-                        if entry.path().extension().unwrap() == "csv" {
-                            let path = entry.path().to_str().expect("Invalid path");
-                            let map = Probability::try_from_csv(path).expect("Invalid csv");
-                            acc.extend(map);
-                        }
+                    if entry.file_type().is_file() && entry.path().extension().unwrap() == "csv" {
+                        let path = entry.path().to_str().expect("Invalid path");
+                        let map = Probability::try_from_csv(path).expect("Invalid csv");
+                        acc.extend(map);
                     }
                 }
                 acc

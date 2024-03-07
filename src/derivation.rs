@@ -1,8 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::Load;
-
 #[derive(Serialize, Deserialize, Debug, Ord, PartialEq, PartialOrd, Eq, Clone)]
 pub struct Literal {
     relation_name: String,
