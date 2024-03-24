@@ -1,9 +1,7 @@
-use crate::derivation::Literal;
+use crate::derivation::{Literal, Rule};
 use anyhow::Result;
-use csv;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use walkdir::WalkDir;
+use std::{collections::BTreeMap, fmt::{self, Display, Formatter}, io::BufRead};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Probability {
@@ -11,7 +9,8 @@ pub struct Probability {
     upper_bound: f64,
 }
 
-pub type ProbabilityMap = BTreeMap<Literal, Probability>;
+pub type LiteralProbabilityMap = BTreeMap<Literal, Probability>;
+pub type RuleProbabilityMap = BTreeMap<Rule, Probability>;
 
 impl Probability {
     pub const ZERO: Probability = Probability {
@@ -32,10 +31,7 @@ impl Probability {
     }
 
     pub fn conjunction(&self, operand: &Probability) -> Probability {
-        let lower_bound = 1.0
-            - operand.upper_bound.min(1.0 - self.lower_bound)
-            - self.upper_bound.min(1.0 - operand.lower_bound)
-            - (1.0 - self.lower_bound).min(1.0 - operand.lower_bound);
+        let lower_bound = 0.0_f64.max(self.lower_bound + operand.lower_bound - 1.0);
         let upper_bound = self.upper_bound.min(operand.upper_bound);
         Probability::new(lower_bound, upper_bound)
     }
@@ -46,55 +42,61 @@ impl Probability {
         Probability::new(lower_bound, upper_bound)
     }
 
-    pub fn try_from_csv(path: &str) -> Result<ProbabilityMap> {
-        let mut reader = csv::Reader::from_path(path)?;
-        let map: ProbabilityMap = reader
-            .records()
-            .filter_map(|result| {
-                result.ok().map(|record| {
-                    // println!("{:?}", record);
-                    let relation_name = record.get(0).expect("Missing relation name").to_owned();
-                    let attributes = record
-                        .iter()
-                        .skip(1)
-                        .take(record.len() - 3)
-                        .map(|s| s.parse::<u32>().expect("Invalid attribute value"))
-                        .collect();
-                    let literal = Literal::new(relation_name, attributes);
-
-                    let lower_bound = record
-                        .get(record.len() - 2)
-                        .expect("Missing lower bound")
-                        .parse::<f64>()
-                        .expect("Invalid lower bound");
-                    let upper_bound = record
-                        .get(record.len() - 1)
-                        .expect("Missing upper bound")
-                        .parse::<f64>()
-                        .expect("Invalid upper bound");
-                    let probability = Probability::new(lower_bound, upper_bound);
-
-                    (literal, probability)
-                })
-            })
-            .collect();
-        Ok(map)
+    pub fn multiply(&self, operand: &Probability) -> Probability {
+        let lower_bound = self.lower_bound * operand.lower_bound;
+        let upper_bound = self.upper_bound * operand.upper_bound;
+        Probability::new(lower_bound, upper_bound)
     }
 
-    pub fn try_from_dir(path: &str) -> Result<ProbabilityMap> {
-        let map = WalkDir::new(path)
-            .into_iter()
-            .fold(ProbabilityMap::new(), |mut acc, entry| {
-                if let Ok(entry) = entry {
-                    if entry.file_type().is_file() && entry.path().extension().unwrap() == "csv" {
-                        let path = entry.path().to_str().expect("Invalid path");
-                        let map = Probability::try_from_csv(path).expect("Invalid csv");
-                        acc.extend(map);
+    pub fn try_from_file(path: &str) -> Result<(LiteralProbabilityMap, RuleProbabilityMap)> {
+        let file = std::fs::File::open(path)?;
+        let reader = std::io::BufReader::new(&file);
+        let mut literal_map = LiteralProbabilityMap::new();
+        let mut rule_map = RuleProbabilityMap::new();
+        reader.lines().for_each(|line| {
+            if let Ok(line) = line {
+                let parts = line.split_whitespace().collect::<Vec<&str>>();
+                if let (Some(&typ), Some(&name), Some(&attributes), Some(&probability)) =
+                    (parts.get(0), parts.get(1), parts.get(2), parts.get(3))
+                {
+                    let attributes_iter = attributes.split(',');
+                    let probability = if probability.contains(',') {
+                        let probabilities = probability
+                            .split(',')
+                            .map(|s| s.parse::<f64>().expect("Invalid probability"))
+                            .collect::<Vec<f64>>();
+                        Probability::new(probabilities[0], probabilities[1])
+                    } else {
+                        let probability = probability.parse::<f64>().expect("Invalid probability");
+                        Probability::new(probability, probability)
+                    };
+
+                    match typ {
+                        "relation" => {
+                            let attributes = attributes_iter
+                                .map(|s| s.parse::<u32>().expect("Invalid attribute value"))
+                                .collect();
+                            let literal = Literal::new(name.to_owned(), attributes);
+                            literal_map.insert(literal, probability);
+                        }
+                        "rule" => {
+                            let attributes: Vec<String> =
+                                attributes_iter.map(|s| s.to_owned()).collect();
+                            let rule = Rule::new(name.to_owned(), attributes);
+                            rule_map.insert(rule, probability);
+                        }
+                        _ => (),
                     }
                 }
-                acc
-            });
-        Ok(map)
+            }
+        });
+        Ok((literal_map, rule_map))
+    }
+}
+
+impl Display for Probability {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "({}, {})", self.lower_bound, self.upper_bound)
     }
 }
 
@@ -102,18 +104,10 @@ impl Probability {
 mod tests {
     use super::*;
     #[test]
-    fn test_try_from_csv() -> Result<()> {
-        let path = "tests/probability/edge.csv";
-        let map = Probability::try_from_csv(path)?;
-        println!("{:?}", map);
-        Ok(())
-    }
-
-    #[test]
-    fn test_try_from_dir() -> Result<()> {
-        let path = "tests/probability";
-        let map = Probability::try_from_dir(path)?;
-        println!("{:?}", map);
+    fn try_from_file() -> Result<()> {
+        let path = "tests/probability.txt";
+        let map = Probability::try_from_file(path)?;
+        println!("Relations: {:?}\nRules: {:?}", map.0, map.1);
         Ok(())
     }
 }
