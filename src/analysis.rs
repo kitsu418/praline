@@ -1,7 +1,7 @@
 use crate::derivation::{Derivation, Literal, Rule};
 use crate::probability::{LiteralProbabilityMap, Probability, RuleProbabilityMap};
 use anyhow::Result;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 
@@ -9,6 +9,11 @@ pub struct Analysis {
     derivations: Vec<Derivation>,
     pub literal_probability_map: LiteralProbabilityMap,
     rule_probability_map: RuleProbabilityMap,
+}
+
+enum State {
+    Known(Probability),
+    Unknown(Vec<usize>),
 }
 
 impl Analysis {
@@ -24,7 +29,7 @@ impl Analysis {
         }
     }
 
-    fn get_rule_probability(&self, head: &Literal, body: &Vec<Literal>) -> Option<&Probability> {
+    fn get_rule_probability(&self, head: &Literal, body: &[Literal]) -> Option<&Probability> {
         let rule = Rule::new(
             head.relation_name.clone(),
             body.iter().map(|l| l.relation_name.clone()).collect(),
@@ -42,36 +47,66 @@ impl Analysis {
                     .contains_key(&derivation.parent)
             })
             .collect();
+        let mut state_map: BTreeMap<(&Literal, &Vec<Literal>), State> = BTreeMap::new();
         while let Some(derivation) = worklist.pop_front() {
             let mut probability = Some(Probability::ZERO);
+            let mut fixed = true;
             for conjunction in &derivation.children {
-                if let Ok(child_probability) =
-                    conjunction
-                        .iter()
-                        .try_fold(Probability::ONE, |acc, literal| {
-                            self.literal_probability_map
-                                .get(literal)
-                                .map_or(Err(()), |p| Ok(acc.conjunction(p)))
-                        })
+                if let Some(State::Known(child_probability)) =
+                    state_map.get(&(&derivation.parent, conjunction))
                 {
-                    if let Some(rule_probability) =
-                        self.get_rule_probability(&derivation.parent, &conjunction)
-                    {
-                        probability = probability
-                            .map(|p| p.disjunction(&child_probability.multiply(rule_probability)));
+                    probability = probability.map(|p| p.disjunction(child_probability));
+                }
+
+                let mut child_probability = Probability::ONE;
+                let mut unknown = Vec::<usize>::new();
+
+                for (id, literal) in conjunction.iter().enumerate() {
+                    if let Some(p) = self.literal_probability_map.get(literal) {
+                        child_probability = child_probability.conjunction(p);
                     } else {
+                        unknown.push(id);
+                    }
+                }
+                if unknown.is_empty() {
+                    child_probability = if let Some(rule_probability) =
+                        self.get_rule_probability(&derivation.parent, conjunction)
+                    {
+                        child_probability.multiply(rule_probability)
+                    } else {
+                        child_probability
+                    };
+                    if probability.is_some() {
                         probability = probability.map(|p| p.disjunction(&child_probability));
                     }
+                    state_map.insert(
+                        (&derivation.parent, conjunction),
+                        State::Known(child_probability),
+                    );
                 } else {
                     probability = None;
-                    break;
+                    if let Some(State::Unknown(previous)) =
+                        state_map.get(&(&derivation.parent, conjunction))
+                    {
+                        if !previous.eq(&unknown) {
+                            fixed = false;
+                        }
+                    } else {
+                        fixed = false;
+                    }
+                    state_map.insert((&derivation.parent, conjunction), State::Unknown(unknown));
                 }
             }
             if let Some(probability) = probability {
                 self.literal_probability_map
                     .insert(derivation.parent.clone(), probability);
-            } else {
+            } else if !fixed {
                 worklist.push_back(derivation);
+            }
+        }
+        for ((head, body), state) in state_map {
+            if let State::Unknown(_) = state {
+                println!("{:?} {:?}", head, body);
             }
         }
     }
@@ -106,7 +141,7 @@ mod tests {
         let mut analysis =
             Analysis::new(derivations, literal_probability_map, rule_probability_map);
         analysis.calculate_probability();
-        println!("{:?}", analysis.literal_probability_map);
+        println!("{:?}", analysis.try_dump_probability_map(None)?);
         Ok(())
     }
 }

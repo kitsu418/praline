@@ -57,7 +57,7 @@ impl Probability {
             if let Ok(line) = line {
                 let parts = line.split_whitespace().collect::<Vec<&str>>();
                 if let (Some(&typ), Some(&name), Some(&attributes), Some(&probability)) =
-                    (parts.get(0), parts.get(1), parts.get(2), parts.get(3))
+                    (parts.first(), parts.get(1), parts.get(2), parts.get(3))
                 {
                     let attributes_iter = attributes.split(',');
                     let probability = if probability.contains(',') {
