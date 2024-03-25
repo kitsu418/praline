@@ -1,7 +1,7 @@
 use crate::derivation::{Derivation, Literal, Rule};
 use crate::probability::{LiteralProbabilityMap, Probability, RuleProbabilityMap};
 use anyhow::Result;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 
@@ -11,6 +11,7 @@ pub struct Analysis {
     rule_probability_map: RuleProbabilityMap,
 }
 
+#[derive(Debug)]
 enum State {
     Known(Probability),
     Unknown(Vec<usize>),
@@ -38,75 +39,68 @@ impl Analysis {
     }
 
     pub fn calculate_probability(&mut self) {
-        let mut worklist: VecDeque<&Derivation> = self
-            .derivations
-            .iter()
-            .filter(|&derivation| {
-                !self
-                    .literal_probability_map
-                    .contains_key(&derivation.parent)
-            })
-            .collect();
         let mut state_map: BTreeMap<(&Literal, &Vec<Literal>), State> = BTreeMap::new();
-        while let Some(derivation) = worklist.pop_front() {
-            let mut probability = Some(Probability::ZERO);
-            let mut fixed = true;
-            for conjunction in &derivation.children {
-                if let Some(State::Known(child_probability)) =
-                    state_map.get(&(&derivation.parent, conjunction))
-                {
-                    probability = probability.map(|p| p.disjunction(child_probability));
+        let mut fixed = false;
+        let mut derived: BTreeSet<&Derivation> = BTreeSet::new();
+        while !fixed {
+            fixed = true;
+            for derivation in &self.derivations {
+                if derived.contains(&derivation) {
+                    continue;
                 }
-
-                let mut child_probability = Probability::ONE;
-                let mut unknown = Vec::<usize>::new();
-
-                for (id, literal) in conjunction.iter().enumerate() {
-                    if let Some(p) = self.literal_probability_map.get(literal) {
-                        child_probability = child_probability.conjunction(p);
-                    } else {
-                        unknown.push(id);
-                    }
-                }
-                if unknown.is_empty() {
-                    child_probability = if let Some(rule_probability) =
-                        self.get_rule_probability(&derivation.parent, conjunction)
-                    {
-                        child_probability.multiply(rule_probability)
-                    } else {
-                        child_probability
-                    };
-                    if probability.is_some() {
-                        probability = probability.map(|p| p.disjunction(&child_probability));
-                    }
-                    state_map.insert(
-                        (&derivation.parent, conjunction),
-                        State::Known(child_probability),
-                    );
-                } else {
-                    probability = None;
-                    if let Some(State::Unknown(previous)) =
+                let mut probability = Some(Probability::ZERO);
+                for conjunction in &derivation.children {
+                    if let Some(State::Known(child_probability)) =
                         state_map.get(&(&derivation.parent, conjunction))
                     {
-                        if !previous.eq(&unknown) {
+                        probability = probability.map(|p| p.disjunction(child_probability));
+                    }
+
+                    let mut child_probability = Probability::ONE;
+                    let mut unknown = Vec::<usize>::new();
+
+                    for (id, literal) in conjunction.iter().enumerate() {
+                        if let Some(p) = self.literal_probability_map.get(literal) {
+                            child_probability = child_probability.conjunction(p);
+                        } else {
+                            unknown.push(id);
+                        }
+                    }
+                    if unknown.is_empty() {
+                        child_probability = if let Some(rule_probability) =
+                            self.get_rule_probability(&derivation.parent, conjunction)
+                        {
+                            child_probability.multiply(rule_probability)
+                        } else {
+                            child_probability
+                        };
+                        if probability.is_some() {
+                            probability = probability.map(|p| p.disjunction(&child_probability));
+                        }
+                        state_map.insert(
+                            (&derivation.parent, conjunction),
+                            State::Known(child_probability),
+                        );
+                    } else {
+                        probability = None;
+                        if let Some(State::Unknown(previous)) =
+                            state_map.get(&(&derivation.parent, conjunction))
+                        {
+                            if !previous.eq(&unknown) {
+                                fixed = false;
+                            }
+                        } else {
                             fixed = false;
                         }
-                    } else {
-                        fixed = false;
+                        state_map
+                            .insert((&derivation.parent, conjunction), State::Unknown(unknown));
                     }
-                    state_map.insert((&derivation.parent, conjunction), State::Unknown(unknown));
                 }
-            }
-            if let Some(probability) = probability {
-                self.literal_probability_map
-                    .insert(derivation.parent.clone(), probability);
-            } else if !fixed {
-                worklist.push_back(derivation);
-            }
-        }
-        for ((head, body), state) in state_map {
-            if let State::Unknown(_) = state {
-                println!("{:?} {:?}", head, body);
+                if let Some(probability) = probability {
+                    self.literal_probability_map
+                        .insert(derivation.parent.clone(), probability);
+                    derived.insert(derivation);
+                }
             }
         }
     }

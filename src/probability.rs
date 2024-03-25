@@ -96,7 +96,7 @@ impl Probability {
 
 impl Display for Probability {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "({}, {})", self.lower_bound, self.upper_bound)
+        write!(f, "({:.2}, {:.2})", self.lower_bound, self.upper_bound)
     }
 }
 

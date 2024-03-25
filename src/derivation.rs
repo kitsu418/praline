@@ -32,7 +32,7 @@ impl Rule {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
 pub struct Derivation {
     pub parent: Literal,
     pub children: Vec<Conjunction>,
