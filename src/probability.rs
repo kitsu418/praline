@@ -1,7 +1,11 @@
-use crate::derivation::{Literal, Rule};
+use crate::derivation::{Relation, Rule};
 use anyhow::Result;
 use serde::Serialize;
-use std::{collections::BTreeMap, fmt::{self, Display, Formatter}, io::BufRead};
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Display, Formatter},
+    io::BufRead,
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Probability {
@@ -9,7 +13,7 @@ pub struct Probability {
     upper_bound: f64,
 }
 
-pub type LiteralProbabilityMap = BTreeMap<Literal, Probability>;
+pub type RelationProbabilityMap = BTreeMap<Relation, Probability>;
 pub type RuleProbabilityMap = BTreeMap<Rule, Probability>;
 
 impl Probability {
@@ -48,10 +52,10 @@ impl Probability {
         Probability::new(lower_bound, upper_bound)
     }
 
-    pub fn try_from_file(path: &str) -> Result<(LiteralProbabilityMap, RuleProbabilityMap)> {
+    pub fn load(path: &str) -> Result<(RelationProbabilityMap, RuleProbabilityMap)> {
         let file = std::fs::File::open(path)?;
         let reader = std::io::BufReader::new(&file);
-        let mut literal_map = LiteralProbabilityMap::new();
+        let mut relation_map = RelationProbabilityMap::new();
         let mut rule_map = RuleProbabilityMap::new();
         reader.lines().for_each(|line| {
             if let Ok(line) = line {
@@ -76,8 +80,8 @@ impl Probability {
                             let attributes = attributes_iter
                                 .map(|s| s.parse::<u32>().expect("Invalid attribute value"))
                                 .collect();
-                            let literal = Literal::new(name.to_owned(), attributes);
-                            literal_map.insert(literal, probability);
+                            let literal = Relation::new(name.to_owned(), attributes);
+                            relation_map.insert(literal, probability);
                         }
                         "rule" => {
                             let attributes: Vec<String> =
@@ -90,7 +94,7 @@ impl Probability {
                 }
             }
         });
-        Ok((literal_map, rule_map))
+        Ok((relation_map, rule_map))
     }
 }
 
@@ -104,9 +108,9 @@ impl Display for Probability {
 mod tests {
     use super::*;
     #[test]
-    fn try_from_file() -> Result<()> {
+    fn test_load() -> Result<()> {
         let path = "tests/probability.txt";
-        let map = Probability::try_from_file(path)?;
+        let map = Probability::load(path)?;
         println!("Relations: {:?}\nRules: {:?}", map.0, map.1);
         Ok(())
     }

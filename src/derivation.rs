@@ -4,17 +4,17 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Ord, PartialEq, PartialOrd, Eq, Clone)]
-pub struct Literal {
-    pub relation_name: String,
+pub struct Relation {
+    pub name: String,
     attributes: Vec<u32>,
 }
 
-type Conjunction = Vec<Literal>;
+type Body = Vec<Relation>;
 
-impl Literal {
-    pub fn new(relation_name: String, attributes: Vec<u32>) -> Self {
-        Literal {
-            relation_name,
+impl Relation {
+    pub fn new(name: String, attributes: Vec<u32>) -> Self {
+        Relation {
+            name,
             attributes,
         }
     }
@@ -34,8 +34,8 @@ impl Rule {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
 pub struct Derivation {
-    pub parent: Literal,
-    pub children: Vec<Conjunction>,
+    pub head: Relation,
+    pub bodies: Vec<Body>,
 }
 
 impl Derivation {
@@ -47,9 +47,9 @@ impl Derivation {
     }
 }
 
-impl Display for Literal {
+impl Display for Relation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}(", self.relation_name)?;
+        write!(f, "{}(", self.name)?;
         for (i, attribute) in self.attributes.iter().enumerate() {
             write!(f, "{}", attribute)?;
             if i < self.attributes.len() - 1 {
@@ -65,7 +65,7 @@ impl Display for Literal {
 mod tests {
     use super::*;
     #[test]
-    fn test_try_from_json_path() -> Result<()> {
+    fn test_dump() -> Result<()> {
         let path = "tests/derivation.json";
         let derivations = Derivation::try_from_json(path)?;
         println!("{:?}", derivations);

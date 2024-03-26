@@ -20,9 +20,9 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     let derivation = Derivation::try_from_json(&args.derivation)?;
-    let probability = Probability::try_from_file(&args.probability)?;
+    let probability = Probability::load(&args.probability)?;
     let mut analysis = analysis::Analysis::new(derivation, probability.0, probability.1);
     analysis.calculate_probability();
-    analysis.try_dump_probability_map(args.output)?;
+    analysis.dump(args.output)?;
     Ok(())
 }
