@@ -1,6 +1,7 @@
 #include "include/derivation.hpp"
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -96,4 +97,28 @@ std::vector<Derivation> Derivation::load(const std::string &path) {
   from_json(j, derivations);
 
   return derivations;
+}
+
+bool Derivation::operator<(const Derivation &other) const {
+  if (head != other.head) {
+    return head < other.head;
+  }
+  return bodies < other.bodies;
+}
+
+std::string Derivation::to_string() const {
+  std::stringstream ss;
+  ss << head.to_string() << " :- ";
+  for (size_t i = 0; i < bodies.size(); i++) {
+    for (size_t j = 0; j < bodies[i].size(); j++) {
+      ss << bodies[i][j].to_string();
+      if (j != bodies[i].size() - 1) {
+        ss << ", ";
+      }
+    }
+    if (i != bodies.size() - 1) {
+      ss << "; ";
+    }
+  }
+  return ss.str();
 }

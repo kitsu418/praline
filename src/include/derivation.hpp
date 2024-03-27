@@ -38,4 +38,7 @@ struct Derivation {
   Derivation() = default;
 
   static std::vector<Derivation> load(const std::string &path);
+  std::string to_string() const;
+
+  bool operator<(const Derivation &other) const;
 };
