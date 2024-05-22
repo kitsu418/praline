@@ -1,6 +1,6 @@
 add_requires("nlohmann_json")
 add_requires("cvc5")
-target("problog")
+target("praline")
     set_kind("binary")
     add_headerfiles("./include/*.hpp")
     add_files("*.cpp")

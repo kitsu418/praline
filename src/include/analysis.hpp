@@ -29,10 +29,13 @@ private:
   get_rule_probability(const Relation &head,
                        const std::vector<Relation> &body) const;
   void solve_unknowns();
+  void compute(const Relation &head);
 
 private:
   std::vector<Derivation> derivations{};
   std::map<Relation, Probability> relation_map{};
   std::map<Rule, Probability> rule_map{};
   std::map<Relation, std::vector<Derivation>::iterator> derivations_index{};
+  std::map<Relation, depclassid_t> dependent_class_map;
+  std::map<std::pair<Relation, Relation>, Probability> dependent_map;
 };

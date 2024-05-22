@@ -2,6 +2,8 @@
 #include <string>
 #include <vector>
 
+using depclassid_t = uint32_t;
+
 struct Relation {
   std::string name;
   std::vector<uint32_t> attributes;

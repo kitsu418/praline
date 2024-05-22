@@ -4,10 +4,13 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <bitset>
 #include <cstddef>
+#include <cstdio>
 #include <cvc5/cvc5.h>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <queue>
 #include <set>
@@ -45,6 +48,34 @@ Analysis::get_rule_probability(const Relation &head,
   return std::nullopt;
 }
 
+enum Operation {
+  kConjunction,
+  kDisjunction,
+};
+
+// void Analysis::compute(const Relation &head) {
+//   auto head_it = derivations_index[head];
+//   Probability probability(0.0, 0.0);
+//   for (const auto &body : head_it->bodies) {
+//     Probability body_probability(1.0, 1.0);
+//     for (const auto &relation : body) {
+//       auto relation_probability_it = relation_map.find(relation);
+//       if (relation_probability_it != relation_map.end()) {
+//         body_probability =
+//             body_probability.dep_conj(relation_probability_it->second);
+//       } else {
+//         compute(relation);
+//       }
+//     }
+//     auto rule_probability = get_rule_probability(head, body);
+//     if (rule_probability.has_value()) {
+//       body_probability = body_probability.ind_conj(rule_probability.value());
+//     }
+//     probability = probability.dep_disj(body_probability);
+//   }
+//   relation_map[head] = std::move(probability);
+// }
+
 void Analysis::calculate_probability() {
   bool fixed = false;
   std::map<std::pair<Relation, std::vector<Relation>>, std::vector<size_t>>
@@ -57,43 +88,176 @@ void Analysis::calculate_probability() {
       worklist.push_back(derivation);
     }
   }
+
+  std::map<Relation, std::set<Relation>> relation_dep_leaves;
+  std::map<std::pair<Relation, Relation>, bool> subset_is_ind;
+
+  std::function<std::set<Relation>(const Relation &,
+                                   std::map<Relation, bool> &)>
+      collect = [&](const Relation &relation,
+                    std::map<Relation, bool> &visited) {
+        std::set<Relation> leaves;
+        if (dependent_class_map.find(relation) != dependent_class_map.end()) {
+          leaves.insert(relation);
+        } else {
+          if (!visited[relation]) {
+            visited[relation] = true;
+            for (const auto &body : derivations_index[relation]->bodies) {
+              for (const auto &r : body) {
+                std::set<Relation> tmp = collect(r, visited);
+                leaves.merge(tmp);
+              }
+            }
+          }
+        }
+        return std::move(leaves);
+      };
+
+  auto operate = [&](const std::set<Relation> &lhs, const Probability &lhsp,
+                     const std::set<Relation> &rhs, const Probability &rhsp,
+                     const Operation &op) {
+    std::set<Relation> lset;
+    std::set<Relation> rset;
+
+    for (auto &relation : lhs) {
+      auto relation_dep_leaves_it = relation_dep_leaves.find(relation);
+      if (relation_dep_leaves_it == relation_dep_leaves.end()) {
+        std::map<Relation, bool> visited;
+        auto collected = collect(relation, visited);
+        relation_dep_leaves[relation] = collected;
+        lset.merge(collected);
+      } else {
+        for (auto &r : relation_dep_leaves[relation]) {
+          lset.insert(r);
+        }
+      }
+    }
+    for (auto &relation : rhs) {
+      auto relation_dep_leaves_it = relation_dep_leaves.find(relation);
+      if (relation_dep_leaves_it == relation_dep_leaves.end()) {
+        std::map<Relation, bool> visited;
+        auto collected = collect(relation, visited);
+        relation_dep_leaves[relation] = collected;
+        rset.merge(collected);
+      } else {
+        for (auto &r : relation_dep_leaves[relation]) {
+          rset.insert(r);
+        }
+      }
+    }
+
+    std::set<Relation> shared;
+    for (auto &r : lset) {
+      if (rset.contains(r)) {
+        shared.insert(r);
+      }
+    }
+
+    std::set<depclassid_t> lids;
+    std::set<depclassid_t> rids;
+
+    for (auto &relation : lset) {
+      if (!shared.contains(relation)) {
+        lids.insert(dependent_class_map[relation]);
+      }
+    }
+    for (auto &relation : rset) {
+      if (!shared.contains(relation)) {
+        rids.insert(dependent_class_map[relation]);
+      }
+    }
+
+    for (auto &l1 : lids) {
+      for (auto &l2 : rids) {
+        if (l1 == l2) {
+          if (op == kConjunction) {
+            return lhsp.dep_conj(rhsp);
+          } else {
+            return lhsp.dep_disj(rhsp);
+          }
+        }
+      }
+    }
+
+    if (shared.empty()) {
+      if (op == kConjunction) {
+        return lhsp.ind_conj(rhsp);
+      } else {
+        return lhsp.ind_disj(rhsp);
+      }
+    } else {
+      if (op == kConjunction) {
+        return lhsp.pos_conj(rhsp);
+      } else {
+        return lhsp.pos_disj(rhsp);
+      }
+    }
+  };
+
   while (!fixed) {
     fixed = true;
     for (const auto &derivation : worklist) {
       if (relation_map.count(derivation.head)) {
         continue;
       }
+
       std::optional<Probability> probability = Probability(0.0, 0.0);
+      std::set<Relation> lhsd;
+
       for (const auto &body : derivation.bodies) {
         auto rule_probability_it =
             rule_probability_map.find(std::make_pair(derivation.head, body));
         if (rule_probability_it != rule_probability_map.end()) {
           if (probability.has_value()) {
-            probability = probability.value() | rule_probability_it->second;
+            probability =
+                operate(lhsd, probability.value(), {body.begin(), body.end()},
+                        rule_probability_it->second, kDisjunction);
+            for (auto &r : body) {
+              lhsd.insert(r);
+            }
           }
           continue;
         }
 
         Probability body_probability(1.0, 1.0);
         std::vector<size_t> unknown;
+        std::set<Relation> lhsc;
 
         for (size_t i = 0; i < body.size(); ++i) {
           auto relation_probability_it = relation_map.find(body[i]);
-          if (relation_probability_it != relation_map.end()) {
+          if (relation_probability_it != relation_map.end() &&
+              find(lhsc.begin(), lhsc.end(), body[i]) == lhsc.end()) {
+            for (int j = i + 1; j < body.size(); ++j) {
+              auto condp_it =
+                  dependent_map.find(std::make_pair(body[i], body[j]));
+              if (condp_it != dependent_map.end()) {
+                body_probability = operate(
+                    lhsc, body_probability, {body[i], body[j]},
+                    condp_it->second.ind_conj(relation_probability_it->second),
+                    kConjunction);
+                lhsc.insert(body[j]);
+                goto next_rel;
+              }
+            }
             body_probability =
-                body_probability & relation_probability_it->second;
+                operate(lhsc, body_probability, {body[i]},
+                        relation_probability_it->second, kConjunction);
+          next_rel:
+            lhsc.insert(body[i]);
           } else {
             unknown.push_back(i);
+            lhsc.insert(body[i]);
           }
         }
 
         if (unknown.empty()) {
           auto rule_probability = get_rule_probability(derivation.head, body);
           if (rule_probability.has_value()) {
-            body_probability = body_probability * rule_probability.value();
+            body_probability =
+                body_probability.ind_conj(rule_probability.value());
           }
           if (probability.has_value()) {
-            probability = probability.value() | body_probability;
+            probability = probability.value().dep_disj(body_probability);
           }
           rule_probability_map[std::make_pair(derivation.head, body)] =
               body_probability;
@@ -109,6 +273,8 @@ void Analysis::calculate_probability() {
           fixed = false;
           rule_unknown_map[std::make_pair(derivation.head, body)] = unknown;
         }
+
+        lhsd.merge(lhsc);
       }
       if (probability.has_value()) {
         relation_map[derivation.head] = probability.value();
@@ -125,14 +291,14 @@ void Analysis::dump(const std::optional<std::string> &path) const {
       throw std::runtime_error("Failed to open file");
     } else {
       for (auto &[relation, probability] : relation_map) {
-        ofs << relation.to_string() << ": " << probability.to_string()
+        ofs << relation.to_string() << " " << probability.to_string()
             << std::endl;
       }
     }
     ofs.close();
   } else {
     for (auto &[relation, probability] : relation_map) {
-      std::cout << relation.to_string() << ": " << probability.to_string()
+      std::cout << relation.to_string() << " " << probability.to_string()
                 << std::endl;
     }
   }
@@ -141,8 +307,8 @@ void Analysis::dump(const std::optional<std::string> &path) const {
 Analysis::Analysis(const std::string &derivation_path,
                    const std::string &probability_path) {
   this->derivations = Derivation::load(derivation_path);
-  std::tie(this->relation_map, this->rule_map) =
-      Probability::load(probability_path);
+  std::tie(this->relation_map, this->rule_map, this->dependent_class_map,
+           this->dependent_map) = Probability::load(probability_path);
   for (auto it = this->derivations.begin(); it != this->derivations.end();
        ++it) {
     this->derivations_index[it->head] = it;
@@ -199,7 +365,7 @@ void Analysis::solve_unknowns() {
     while (!worklist.empty()) {
       auto head = worklist.front();
       worklist.pop();
-      
+
       if (relation_terms.find(head) == relation_terms.end()) {
         relation_terms[head] = std::to_array(
             {tm.mkConst(fpt64, term_name_generator(head) + "_l"),

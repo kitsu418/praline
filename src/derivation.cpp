@@ -1,5 +1,6 @@
 #include "include/derivation.hpp"
 #include <fstream>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>

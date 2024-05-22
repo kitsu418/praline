@@ -1,2 +1,2 @@
-set_project("problog")
+set_project("praline")
 includes("src")
