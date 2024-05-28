@@ -1,5 +1,6 @@
 #include "include/derivation.hpp"
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -26,7 +27,7 @@ std::string Relation::to_string() const {
   for (size_t i = 0; i < attributes.size(); i++) {
     str += std::to_string(attributes[i]);
     if (i != attributes.size() - 1) {
-      str += ", ";
+      str += ",";
     }
   }
   str += ")";
@@ -114,11 +115,11 @@ std::string Derivation::to_string() const {
     for (size_t j = 0; j < bodies[i].size(); j++) {
       ss << bodies[i][j].to_string();
       if (j != bodies[i].size() - 1) {
-        ss << ", ";
+        ss << ",";
       }
     }
     if (i != bodies.size() - 1) {
-      ss << "; ";
+      ss << " ; ";
     }
   }
   return ss.str();

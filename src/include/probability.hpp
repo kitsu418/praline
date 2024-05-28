@@ -23,7 +23,7 @@ struct Probability {
                     std::map<Rule, Probability>,
                     std::map<Relation, depclassid_t>,
                     std::map<std::pair<Relation, Relation>, Probability>>
-  load(const std::string &path);
+  load(const std::string &path, const bool &is_legacy);
 
   std::string to_string() const;
 };

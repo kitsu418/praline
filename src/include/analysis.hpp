@@ -8,11 +8,12 @@
 class Analysis {
 public:
   void calculate_probability();
+  void calculate_probability_legacy();
   void dump(const std::optional<std::string> &path) const;
 
 public:
   Analysis(const std::string &derivation_path,
-           const std::string &probability_path);
+           const std::string &probability_path, const bool &is_legcy);
 
 private:
   Analysis(const std::vector<Derivation> &derivations,
@@ -38,4 +39,5 @@ private:
   std::map<Relation, std::vector<Derivation>::iterator> derivations_index{};
   std::map<Relation, depclassid_t> dependent_class_map;
   std::map<std::pair<Relation, Relation>, Probability> dependent_map;
+  bool is_legacy{false};
 };

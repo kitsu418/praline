@@ -62,7 +62,7 @@ Probability Probability::ind_disj(const Probability &other) const {
 std::tuple<std::map<Relation, Probability>, std::map<Rule, Probability>,
            std::map<Relation, depclassid_t>,
            std::map<std::pair<Relation, Relation>, Probability>>
-Probability::load(const std::string &path) {
+Probability::load(const std::string &path, const bool &is_legacy) {
   std::ifstream ifs(path);
   if (!ifs.is_open()) {
     throw std::runtime_error("Failed to open file: " + path);
@@ -120,15 +120,18 @@ Probability::load(const std::string &path) {
 
     if (terms[0] == "rule" || terms[0] == "relation") {
       if (terms[0] == "relation") {
-        if (terms.size() != 5) {
+        if ((terms.size() != 5 && !is_legacy) ||
+            (is_legacy && terms.size() != 4 && terms.size() != 5)) {
           throw std::runtime_error("Invalid input file format (relation)");
         }
         std::vector<uint32_t> attrs;
         parse_attributes(terms[2], attrs);
-        auto depclass_id = std::stoul(terms[4]);
         auto relation = Relation(terms[1], std::move(attrs));
         relation_map[relation] = std::move(parse_probability(terms[3]));
-        dependent_class_map[relation] = depclass_id;
+        if (!is_legacy) {
+          auto depclass_id = std::stoul(terms[4]);
+          dependent_class_map[relation] = depclass_id;
+        }
       } else {
         if (terms.size() != 4) {
           throw std::runtime_error("Invalid input file format (rule)");
@@ -138,8 +141,8 @@ Probability::load(const std::string &path) {
         rule_map[Rule(terms[1], std::move(attrs))] =
             std::move(parse_probability(terms[3]));
       }
-    } else if (terms[0] == "dependent") {
-      if (terms.size() != 6) {
+    } else if (!is_legacy && terms[0] == "dependent") {
+      if (is_legacy || terms.size() != 6) {
         throw std::runtime_error("Invalid input file format (dependent)");
       }
       std::vector<uint32_t> attrs1;
@@ -149,8 +152,6 @@ Probability::load(const std::string &path) {
       dependent_map[std::make_pair(Relation(terms[1], std::move(attrs1)),
                                    Relation(terms[3], std::move(attrs2)))] =
           std::stod(terms[5]);
-    } else {
-      throw std::runtime_error("Invalid input file format (unknown type)");
     }
   }
   ifs.close();
@@ -161,7 +162,7 @@ Probability::load(const std::string &path) {
 
 std::string Probability::to_string() const {
   std::stringstream ss;
-  ss << "(" << std::fixed << std::setprecision(6) << lower_bound << ", "
-     << upper_bound << ")";
+  ss << "[" << std::fixed << std::setprecision(6) << lower_bound << ","
+     << upper_bound << "]";
   return ss.str();
 }
