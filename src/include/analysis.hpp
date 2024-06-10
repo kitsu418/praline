@@ -4,6 +4,7 @@
 #include <map>
 #include <optional>
 #include <vector>
+#include <set>
 
 class Analysis {
 public:
@@ -23,14 +24,14 @@ private:
                &derivations_index)
       : derivations(derivations), relation_map(relation_map),
         rule_map(rule_map), derivations_index(derivations_index){};
-  const std::vector<Derivation> &get_derivations() const;
   std::optional<Probability>
   get_relation_probability(const Relation &relation) const;
   std::optional<Probability>
   get_rule_probability(const Relation &head,
                        const std::vector<Relation> &body) const;
   void solve_unknowns();
-  void compute(const Relation &head);
+  void refine();
+  void strengthen_results();
 
 private:
   std::vector<Derivation> derivations{};
@@ -39,5 +40,9 @@ private:
   std::map<Relation, std::vector<Derivation>::iterator> derivations_index{};
   std::map<Relation, depclassid_t> dependent_class_map;
   std::map<std::pair<Relation, Relation>, Probability> dependent_map;
+  std::set<std::string> queries;
   bool is_legacy{false};
+
+  std::set<Relation> dfs(Derivation &derivation, std::set<Derivation *> &visited,
+           std::vector<Derivation *> &component);
 };

@@ -1,6 +1,7 @@
 #pragma once
 #include "derivation.hpp"
 #include <map>
+#include <set>
 #include <string>
 
 struct Probability {
@@ -22,7 +23,8 @@ struct Probability {
   static std::tuple<std::map<Relation, Probability>,
                     std::map<Rule, Probability>,
                     std::map<Relation, depclassid_t>,
-                    std::map<std::pair<Relation, Relation>, Probability>>
+                    std::map<std::pair<Relation, Relation>, Probability>,
+                    std::set<std::string>>
   load(const std::string &path, const bool &is_legacy);
 
   std::string to_string() const;

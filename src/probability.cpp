@@ -61,7 +61,8 @@ Probability Probability::ind_disj(const Probability &other) const {
 
 std::tuple<std::map<Relation, Probability>, std::map<Rule, Probability>,
            std::map<Relation, depclassid_t>,
-           std::map<std::pair<Relation, Relation>, Probability>>
+           std::map<std::pair<Relation, Relation>, Probability>,
+           std::set<std::string>>
 Probability::load(const std::string &path, const bool &is_legacy) {
   std::ifstream ifs(path);
   if (!ifs.is_open()) {
@@ -72,6 +73,7 @@ Probability::load(const std::string &path, const bool &is_legacy) {
   std::map<Rule, Probability> rule_map;
   std::map<Relation, depclassid_t> dependent_class_map;
   std::map<std::pair<Relation, Relation>, Probability> dependent_map;
+  std::set<std::string> queries;
 
   auto parse_attributes = []<typename T>(const std::string &line,
                                          std::vector<T> &attrs) {
@@ -122,7 +124,8 @@ Probability::load(const std::string &path, const bool &is_legacy) {
       if (terms[0] == "relation") {
         if ((terms.size() != 5 && !is_legacy) ||
             (is_legacy && terms.size() != 4 && terms.size() != 5)) {
-          throw std::runtime_error("Invalid input file format (relation)");
+          throw std::runtime_error("Invalid input file format (relation): " +
+                                   line);
         }
         std::vector<uint32_t> attrs;
         parse_attributes(terms[2], attrs);
@@ -134,16 +137,22 @@ Probability::load(const std::string &path, const bool &is_legacy) {
         }
       } else {
         if (terms.size() != 4) {
-          throw std::runtime_error("Invalid input file format (rule)");
+          throw std::runtime_error("Invalid input file format (rule): " + line);
         }
         std::vector<std::string> attrs;
         parse_attributes(terms[2], attrs);
         rule_map[Rule(terms[1], std::move(attrs))] =
             std::move(parse_probability(terms[3]));
       }
+    } else if (terms[0] == "query") {
+      if (terms.size() != 2) {
+        throw std::runtime_error("Invalid input file format (query): " + line);
+      }
+      queries.insert(terms[1]);
     } else if (!is_legacy && terms[0] == "dependent") {
       if (is_legacy || terms.size() != 6) {
-        throw std::runtime_error("Invalid input file format (dependent)");
+        throw std::runtime_error("Invalid input file format (dependent): " +
+                                 line);
       }
       std::vector<uint32_t> attrs1;
       parse_attributes(terms[2], attrs1);
@@ -157,7 +166,8 @@ Probability::load(const std::string &path, const bool &is_legacy) {
   ifs.close();
   return std::move(std::make_tuple(std::move(relation_map), std::move(rule_map),
                                    std::move(dependent_class_map),
-                                   std::move(dependent_map)));
+                                   std::move(dependent_map),
+                                   std::move(queries)));
 }
 
 std::string Probability::to_string() const {
