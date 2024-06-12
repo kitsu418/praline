@@ -1,4 +1,5 @@
 #include "include/analysis.hpp"
+#include "gurobi_c++.h"
 #include "include/derivation.hpp"
 #include "include/probability.hpp"
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <cvc5/cvc5.h>
 #include <fstream>
 #include <functional>
+#include <gurobi_c.h>
 #include <iostream>
 #include <iterator>
 #include <optional>
@@ -22,15 +24,6 @@
 #include <utility>
 #include <variant>
 #include <vector>
-
-std::optional<Probability>
-Analysis::get_relation_probability(const Relation &relation) const {
-  auto it = relation_map.find(relation);
-  if (it != relation_map.end()) {
-    return it->second;
-  }
-  return std::nullopt;
-}
 
 std::optional<Probability>
 Analysis::get_rule_probability(const Relation &head,
@@ -540,73 +533,6 @@ void Analysis::solve_unknowns() {
   }
 }
 
-std::set<Relation> Analysis::dfs(Derivation &derivation,
-                                 std::set<Derivation *> &visited,
-                                 std::vector<Derivation *> &component) {
-  if (visited.contains(&derivation)) {
-    return {};
-  }
-  visited.insert(&derivation);
-  std::set<Relation> leaves;
-
-  if (relation_map.count(derivation.head)) {
-    if (dependent_class_map.find(derivation.head) !=
-        dependent_class_map.end()) {
-      leaves.insert(derivation.head);
-    }
-  } else {
-    std::optional<Probability> probability = Probability(0.0, 0.0);
-    std::set<Relation> lhsd;
-
-    for (const auto &body : derivation.bodies) {
-      Probability body_probability(1.0, 1.0);
-      std::set<Relation> lhsc;
-      bool has_unknown = false;
-
-      for (size_t i = 0; i < body.size(); ++i) {
-        if (find(lhsc.begin(), lhsc.end(), body[i]) == lhsc.end()) {
-          auto relation_probability = get_relation_probability(body[i]);
-          if (!relation_probability.has_value()) {
-            auto leaf = dfs(*derivations_index[body[i]], visited, component);
-            leaves.merge(leaf);
-          }
-          if (relation_probability.has_value()) {
-            for (int j = i + 1; j < body.size(); ++j) {
-              auto condp_it =
-                  dependent_map.find(std::make_pair(body[i], body[j]));
-              if (condp_it != dependent_map.end()) {
-                body_probability = body_probability.dep_conj(
-                    condp_it->second.ind_conj(relation_probability.value()));
-                lhsc.insert(body[j]);
-                goto next_rel;
-              }
-            }
-            body_probability =
-                body_probability.dep_conj(relation_probability.value());
-          next_rel:
-            lhsc.insert(body[i]);
-          } else {
-            has_unknown = true;
-            lhsc.insert(body[i]);
-          }
-        }
-      }
-
-      for (const auto &relation : body) {
-        if (dependent_class_map.find(relation) != dependent_class_map.end()) {
-          continue;
-        }
-        if (derivations_index.find(relation) != derivations_index.end()) {
-          dfs(*derivations_index[relation], visited, component);
-        }
-      }
-    }
-  }
-
-  component.push_back(&derivation);
-  return leaves;
-}
-
 class Timer {
 public:
   Timer() : start(std::chrono::high_resolution_clock::now()) {}
@@ -620,29 +546,9 @@ public:
 };
 
 void Analysis::refine() {
-  TermManager tm;
-  Solver solver(tm);
-  // solver.setOption("produce-models", "true");
-  // solver.setOption("produce-unsat-cores", "true");
-  solver.setOption("tlimit-per", "1000");
-  solver.setLogic("ALL");
+  using state_t = uint64_t;
+  const int DEPTH_LIMIT = 3;
 
-  Term rm = tm.mkRoundingMode(RoundingMode::ROUND_NEAREST_TIES_TO_EVEN);
-  Sort fpt64 = tm.mkFloatingPointSort(11, 53);
-
-  auto get_fpt64_value = [](const Term &term) -> double {
-    uint64_t bits = std::stoull(
-        std::get<2>(term.getFloatingPointValue()).getBitVectorValue(10));
-    return std::bit_cast<double>(bits);
-  };
-
-  auto mk_fpt64_constant = [&](const double &value) {
-    return tm.mkFloatingPoint(
-        11, 53, tm.mkBitVector(64, std::bit_cast<uint64_t>(value)));
-  };
-
-  auto zero = mk_fpt64_constant(0.0);
-  auto one = mk_fpt64_constant(1.0);
   std::queue<Relation> roots;
 
   for (const auto &derivation : derivations) {
@@ -651,16 +557,20 @@ void Analysis::refine() {
     }
   }
 
-  using state_t = uint64_t;
-  const int DEPTH_LIMIT = 2;
-  const double eps = 1e-8;
-
   std::function<void(const std::pair<Relation, int> &,
-                     std::map<Relation, int> &, int &)>
+                     std::map<Relation, int> &, int &,
+                     std::map<Relation, bool> &)>
       collect = [&](const std::pair<Relation, int> &current,
-                    std::map<Relation, int> &collected, int &cnt) {
+                    std::map<Relation, int> &collected, int &cnt,
+                    std::map<Relation, bool> &visited) {
         auto relation = current.first;
         auto depth = current.second;
+
+        // if (visited[relation]) {
+        //   std::cerr << relation.to_string() << std::endl;
+        //   return;
+        // }
+        // visited[relation] = true;
 
         if (depth == DEPTH_LIMIT ||
             (depth < DEPTH_LIMIT &&
@@ -672,7 +582,7 @@ void Analysis::refine() {
         } else if (depth < DEPTH_LIMIT) {
           for (const auto &body : derivations_index[relation]->bodies) {
             for (const auto &r : body) {
-              collect({r, depth + 1}, collected, cnt);
+              collect({r, depth + 1}, collected, cnt, visited);
             }
           }
         }
@@ -681,30 +591,27 @@ void Analysis::refine() {
   while (!roots.empty()) {
     auto root = roots.front();
     roots.pop();
-    printf("%s\n", root.to_string().c_str());
 
-    std::map<Relation, int> facts_id;
+    std::map<Relation, int> facts_id{};
+    std::map<Relation, bool> visited{};
     int facts_num = 0;
-    collect({root, 0}, facts_id, facts_num);
-    solver.resetAssertions();
+    collect({root, 0}, facts_id, facts_num, visited);
 
     // construct variables
-    Term variables[(1 << facts_num)];
-    for (state_t state = 0; state < (1ull << facts_num); ++state) {
-      variables[state] = tm.mkConst(fpt64, "V_" + std::to_string(state));
-      solver.assertFormula(
-          tm.mkTerm(Kind::FLOATINGPOINT_LEQ, {variables[state], one}));
-      solver.assertFormula(
-          tm.mkTerm(Kind::FLOATINGPOINT_GEQ, {variables[state], zero}));
-    }
+    GRBEnv env = GRBEnv();
+    // env.set(GRB_IntParam_LogToConsole, 0);
+    // env.set(GRB_IntParam_OutputFlag, 0);
+    env.start();
+    GRBModel model = GRBModel(env);
+    GRBVar variables[(1 << facts_num)];
+    GRBLinExpr sum = 0;
 
-    // add all sum to one constraint
-    Term sum_to_one = variables[0];
-    for (state_t state = 1; state < (1ull << facts_num); ++state) {
-      sum_to_one = tm.mkTerm(Kind::FLOATINGPOINT_ADD,
-                             {rm, sum_to_one, variables[state]});
+    for (state_t state = 0; state < (1ull << facts_num); ++state) {
+      variables[state] = model.addVar(0.0, 1.0, 1.0, GRB_CONTINUOUS,
+                                      "V_" + std::to_string(state));
+      sum += variables[state];
     }
-    solver.assertFormula(tm.mkTerm(Kind::FLOATINGPOINT_EQ, {sum_to_one, one}));
+    auto sum_to_one = model.addConstr(sum, GRB_EQUAL, 1.0);
 
     std::function<std::map<state_t, double>(const std::pair<Relation, int> &)>
         add_constraints = [&](const std::pair<Relation, int> &current) {
@@ -717,35 +624,35 @@ void Analysis::refine() {
                 derivations_index[relation]->bodies.empty()))) {
             // This is the fact case
             state_t mask = (1ull << facts_id[relation]);
-            Term term = variables[mask];
+            GRBLinExpr expr = 0;
             std::map<state_t, double> constraints{};
-            constraints[mask] = 1.0;
 
-            for (state_t state = mask + 1ull; state < (1ull << facts_num);
-                 ++state) {
+            for (state_t state = mask; state < (1ull << facts_num); ++state) {
               if ((state & mask)) {
-                term = tm.mkTerm(Kind::FLOATINGPOINT_ADD,
-                                 {rm, term, variables[state]});
+                expr += variables[state];
                 constraints[state] = 1.0;
               }
             }
 
-            solver.assertFormula(tm.mkTerm(
-                Kind::FLOATINGPOINT_GEQ,
-                {term, mk_fpt64_constant(relation_map[relation].lower_bound)}));
-            solver.assertFormula(tm.mkTerm(
-                Kind::FLOATINGPOINT_LEQ,
-                {term, mk_fpt64_constant(relation_map[relation].upper_bound)}));
+            model.addConstr(expr, GRB_GREATER_EQUAL,
+                            relation_map[relation].lower_bound);
+            model.addConstr(expr, GRB_LESS_EQUAL,
+                            relation_map[relation].upper_bound);
+
+            std::cerr << relation.to_string() << " = ";
+            for (const auto &status : constraints) {
+              std::cerr << status.second << " * V_"
+                        << std::bitset<8>(status.first) << " + ";
+            }
+            std::cerr << " = " << relation_map[relation].lower_bound << ", " << relation_map[relation].upper_bound << std::endl;
 
             return constraints;
           } else if (depth < DEPTH_LIMIT) {
-            std::map<state_t, double> states;
+            std::map<state_t, double> states{};
 
             for (size_t i = 0; i < derivations_index[relation]->bodies.size();
                  ++i) {
               const auto &body = derivations_index[relation]->bodies[i];
-              fprintf(stderr, "%s\n",
-                      derivations_index[relation]->to_string().c_str());
               std::map<state_t, double> body_states;
 
               if (body.size() > 0) {
@@ -759,11 +666,7 @@ void Analysis::refine() {
                 for (const auto &c1 : tmp1) {
                   for (const auto &c2 : tmp2) {
                     if (c1.first == c2.first) {
-                      if (c1.second * c2.second < eps) {
-                        body_states.erase(c1.first);
-                      } else {
-                        body_states[c1.first] = c1.second * c2.second;
-                      }
+                      body_states[c1.first] = c1.second * c2.second;
                       break;
                     }
                   }
@@ -778,14 +681,6 @@ void Analysis::refine() {
                 }
               }
 
-              for (const auto &c : body_states) {
-                std::cerr << c.second << " * V_" << std::bitset<8>(c.first)
-                          << " + ";
-                // fprintf(stderr, "%.6lf * V_%lld + ", c.second, c.first);
-              }
-              // fprintf(stderr, "\n");
-              std::cerr << std::endl;
-
               if (i == 0) {
                 std::swap(states, body_states);
               } else {
@@ -799,32 +694,6 @@ void Analysis::refine() {
                 }
               }
             }
-
-            // if (depth > 0) {
-            //   auto it = states.begin();
-            //   if (it != states.end()) {
-            //     Term term = tm.mkTerm(
-            //         Kind::FLOATINGPOINT_MULT,
-            //         {rm, variables[it->first],
-            //         mk_fpt64_constant(it->second)});
-            //     for (++it; it != states.end(); ++it) {
-            //       term =
-            //           tm.mkTerm(Kind::FLOATINGPOINT_ADD,
-            //                     {rm, term,
-            //                      tm.mkTerm(Kind::FLOATINGPOINT_MULT,
-            //                                {rm, variables[it->first],
-            //                                 mk_fpt64_constant(it->second)})});
-            //     }
-            //     solver.assertFormula(tm.mkTerm(
-            //         Kind::FLOATINGPOINT_GEQ,
-            //         {term,
-            //          mk_fpt64_constant(relation_map[relation].lower_bound)}));
-            //     solver.assertFormula(tm.mkTerm(
-            //         Kind::FLOATINGPOINT_LEQ,
-            //         {term,
-            //          mk_fpt64_constant(relation_map[relation].upper_bound)}));
-            //   }
-            // }
 
             return states;
           } else {
@@ -852,66 +721,68 @@ void Analysis::refine() {
     auto u = relation_map[root].upper_bound;
     auto epsilon = (u - l) / 50.0;
     // auto epsilon = 0.00001;
-    auto assertions = solver.getAssertions();
-    // std::cerr << assertions << std::endl;
 
     auto it = root_status.begin();
-    Term root_term =
-        tm.mkTerm(Kind::FLOATINGPOINT_MULT,
-                  {rm, variables[it->first], mk_fpt64_constant(it->second)});
-    for (++it; it != root_status.end(); ++it) {
-      root_term = tm.mkTerm(Kind::FLOATINGPOINT_ADD,
-                            {rm, root_term,
-                             tm.mkTerm(Kind::FLOATINGPOINT_MULT,
-                                       {rm, variables[it->first],
-                                        mk_fpt64_constant(it->second)})});
+    GRBLinExpr expr = 0;
+    for (const auto &status : root_status) {
+      expr += status.second * variables[status.first];
     }
 
-    do {
-      if (solver.getAssertions().empty()) {
-        for (const auto &assertion : assertions) {
-          solver.assertFormula(assertion);
-        }
-      }
+    auto root_var = model.addVar(0.0, 1.0, 1.0, GRB_CONTINUOUS, "root");
+    auto root_constr = model.addConstr(expr, GRB_EQUAL, expr);
+    model.setObjective(expr, GRB_MAXIMIZE);
+    model.optimize();
 
-      auto ll = l + epsilon > u ? u : l + epsilon;
+    const double eps = 1e-3;
 
-      solver.assertFormula(tm.mkTerm(Kind::FLOATINGPOINT_LEQ,
-                                     {root_term, mk_fpt64_constant(ll)}));
-      solver.assertFormula(tm.mkTerm(Kind::FLOATINGPOINT_GEQ,
-                                     {root_term, mk_fpt64_constant(l)}));
-
-      if (solver.checkSat().isUnsat()) {
-        l = ll;
-        fprintf(stderr, "UNSAT: %.6lf\n", ll);
-        solver.resetAssertions();
+    double uu = l;
+    while ((u - uu) > eps) {
+      double mid = (u + uu) / 2.0;
+      std::cerr << root.to_string() << " ul: " << uu << " mid: " << mid
+                << " uu: " << u;
+      auto ub = model.addConstr(expr, GRB_LESS_EQUAL, u);
+      auto lb = model.addConstr(expr, GRB_GREATER_EQUAL, mid);
+      model.optimize();
+      if (model.get(GRB_IntAttr_Status) == GRB_INFEASIBLE) {
+        u = mid;
+        std::cerr << " UNSAT" << std::endl;
+        model.remove(ub);
+        model.remove(lb);
+        model.update();
       } else {
-        fprintf(stderr, "SAT: %.6lf\n", ll);
-        break;
+        uu = mid;
+        std::cerr << " SAT" << std::endl;
+        model.remove(ub);
+        model.remove(lb);
+        model.update();
       }
-    } while (l + epsilon < u);
-    solver.resetAssertions();
-    do {
-      for (const auto &assertion : assertions) {
-        solver.assertFormula(assertion);
-      }
+    }
+    std::cerr << root.to_string() << " ul: " << uu << " uu: " << u << std::endl;
 
-      auto uu = u - epsilon < l ? l : u - epsilon;
-
-      solver.assertFormula(tm.mkTerm(Kind::FLOATINGPOINT_LEQ,
-                                     {root_term, mk_fpt64_constant(u)}));
-      solver.assertFormula(tm.mkTerm(Kind::FLOATINGPOINT_GEQ,
-                                     {root_term, mk_fpt64_constant(uu)}));
-
-      if (solver.checkSat().isUnsat()) {
-        u = uu;
-        fprintf(stderr, "UNSAT: %.6lf\n", uu);
-        solver.resetAssertions();
+    double ll = u;
+    while ((ll - l) > eps) {
+      double mid = (l + ll) / 2.0;
+      std::cerr << root.to_string() << " ll: " << l << " mid: " << mid
+                << " lu: " << ll;
+      auto ub = model.addConstr(expr, GRB_LESS_EQUAL, mid);
+      auto lb = model.addConstr(expr, GRB_GREATER_EQUAL, l);
+      model.optimize();
+      if (model.get(GRB_IntAttr_Status) == GRB_INFEASIBLE) {
+        l = mid;
+        std::cerr << " UNSAT" << std::endl;
+        model.remove(ub);
+        model.remove(lb);
+        model.update();
       } else {
-        fprintf(stderr, "SAT: %.6lf\n", uu);
-        break;
+        ll = mid;
+        std::cerr << " SAT" << std::endl;
+        model.remove(ub);
+        model.remove(lb);
+        model.update();
       }
-    } while (u - epsilon > l);
+    }
+    std::cerr << root.to_string() << " ll: " << l << " lu: " << ll << std::endl;
+
     relation_map[root] = Probability(l, u);
   }
 }
