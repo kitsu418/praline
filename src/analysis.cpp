@@ -129,8 +129,8 @@ void Analysis::calculate_probability() {
     }
     // edge_num += derivation.bodies.size();
   }
-  std::cerr << "node_num: " << node_num << std::endl;
-  std::cerr << "edge_num: " << edge_num << std::endl;
+  // std::cerr << "node_num: " << node_num << std::endl;
+  // std::cerr << "edge_num: " << edge_num << std::endl;
   bool fixed = false;
   std::map<std::pair<Relation, std::vector<Relation>>, std::vector<size_t>>
       rule_unknown_map{};
@@ -366,7 +366,7 @@ Analysis::Analysis(const std::string &derivation_path,
                    const std::string &probability_path, const bool &is_legacy) {
   this->derivations = Derivation::load(derivation_path);
   std::tie(this->relation_map, this->rule_map, this->dependent_class_map,
-           this->dependent_map, this->queries) =
+           this->dependent_map, this->queries, this->facts) =
       Probability::load(probability_path, is_legacy);
   for (auto it = this->derivations.begin(); it != this->derivations.end();
        ++it) {
@@ -533,21 +533,8 @@ void Analysis::solve_unknowns() {
   }
 }
 
-class Timer {
-public:
-  Timer() : start(std::chrono::high_resolution_clock::now()) {}
-  ~Timer() {
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration =
-        std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cerr << "Time: " << duration.count() << "ms" << std::endl;
-  }
-  std::chrono::time_point<std::chrono::high_resolution_clock> start;
-};
-
 void Analysis::refine() {
   using state_t = uint64_t;
-  const int DEPTH_LIMIT = 3;
 
   std::queue<Relation> roots;
 
@@ -557,24 +544,18 @@ void Analysis::refine() {
     }
   }
 
+  int DEPTH_LIMIT = 5;
+
   std::function<void(const std::pair<Relation, int> &,
-                     std::map<Relation, int> &, int &,
-                     std::map<Relation, bool> &)>
+                     std::map<Relation, int> &, int &)>
       collect = [&](const std::pair<Relation, int> &current,
-                    std::map<Relation, int> &collected, int &cnt,
-                    std::map<Relation, bool> &visited) {
+                    std::map<Relation, int> &collected, int &cnt) {
         auto relation = current.first;
         auto depth = current.second;
 
-        // if (visited[relation]) {
-        //   std::cerr << relation.to_string() << std::endl;
-        //   return;
-        // }
-        // visited[relation] = true;
-
         if (depth == DEPTH_LIMIT ||
             (depth < DEPTH_LIMIT &&
-             (!derivations_index.contains(relation) ||
+             (facts.contains(relation) ||
               derivations_index[relation]->bodies.empty()))) {
           if (!collected.contains(relation)) {
             collected[relation] = cnt++;
@@ -582,7 +563,7 @@ void Analysis::refine() {
         } else if (depth < DEPTH_LIMIT) {
           for (const auto &body : derivations_index[relation]->bodies) {
             for (const auto &r : body) {
-              collect({r, depth + 1}, collected, cnt, visited);
+              collect({r, depth + 1}, collected, cnt);
             }
           }
         }
@@ -593,14 +574,28 @@ void Analysis::refine() {
     roots.pop();
 
     std::map<Relation, int> facts_id{};
-    std::map<Relation, bool> visited{};
     int facts_num = 0;
-    collect({root, 0}, facts_id, facts_num, visited);
+
+    while (true) {
+      if (DEPTH_LIMIT < 0) {
+        break;
+      }
+
+      collect({root, 0}, facts_id, facts_num);
+
+      if (facts_num > 15) {
+        facts_num = 0;
+        facts_id.clear();
+        --DEPTH_LIMIT;
+      } else {
+        break;
+      }
+    }
 
     // construct variables
     GRBEnv env = GRBEnv();
-    // env.set(GRB_IntParam_LogToConsole, 0);
-    // env.set(GRB_IntParam_OutputFlag, 0);
+    env.set(GRB_IntParam_LogToConsole, 0);
+    env.set(GRB_IntParam_OutputFlag, 0);
     env.start();
     GRBModel model = GRBModel(env);
     GRBVar variables[(1 << facts_num)];
@@ -618,10 +613,7 @@ void Analysis::refine() {
           auto relation = current.first;
           auto depth = current.second;
 
-          if (depth == DEPTH_LIMIT ||
-              (depth < DEPTH_LIMIT &&
-               (!derivations_index.contains(relation) ||
-                derivations_index[relation]->bodies.empty()))) {
+          if (facts_id.contains(relation)) {
             // This is the fact case
             state_t mask = (1ull << facts_id[relation]);
             GRBLinExpr expr = 0;
@@ -638,13 +630,6 @@ void Analysis::refine() {
                             relation_map[relation].lower_bound);
             model.addConstr(expr, GRB_LESS_EQUAL,
                             relation_map[relation].upper_bound);
-
-            std::cerr << relation.to_string() << " = ";
-            for (const auto &status : constraints) {
-              std::cerr << status.second << " * V_"
-                        << std::bitset<8>(status.first) << " + ";
-            }
-            std::cerr << " = " << relation_map[relation].lower_bound << ", " << relation_map[relation].upper_bound << std::endl;
 
             return constraints;
           } else if (depth < DEPTH_LIMIT) {
@@ -701,17 +686,7 @@ void Analysis::refine() {
           }
         };
 
-    std::map<state_t, double> root_status;
-    {
-      Timer timer;
-      root_status = add_constraints({root, 0});
-    }
-    std::cerr << root.to_string() << " = ";
-    for (const auto &status : root_status) {
-      std::cerr << status.second << " * V_" << std::bitset<8>(status.first)
-                << " + ";
-    }
-    std::cerr << std::endl;
+    std::map<state_t, double> root_status = add_constraints({root, 0});
 
     if (root_status.empty()) {
       continue;
@@ -719,69 +694,47 @@ void Analysis::refine() {
 
     auto l = relation_map[root].lower_bound;
     auto u = relation_map[root].upper_bound;
-    auto epsilon = (u - l) / 50.0;
-    // auto epsilon = 0.00001;
 
-    auto it = root_status.begin();
     GRBLinExpr expr = 0;
     for (const auto &status : root_status) {
       expr += status.second * variables[status.first];
     }
 
-    auto root_var = model.addVar(0.0, 1.0, 1.0, GRB_CONTINUOUS, "root");
-    auto root_constr = model.addConstr(expr, GRB_EQUAL, expr);
-    model.setObjective(expr, GRB_MAXIMIZE);
-    model.optimize();
-
-    const double eps = 1e-3;
+    const double eps = 1e-6;
 
     double uu = l;
     while ((u - uu) > eps) {
       double mid = (u + uu) / 2.0;
-      std::cerr << root.to_string() << " ul: " << uu << " mid: " << mid
-                << " uu: " << u;
       auto ub = model.addConstr(expr, GRB_LESS_EQUAL, u);
       auto lb = model.addConstr(expr, GRB_GREATER_EQUAL, mid);
       model.optimize();
       if (model.get(GRB_IntAttr_Status) == GRB_INFEASIBLE) {
         u = mid;
-        std::cerr << " UNSAT" << std::endl;
         model.remove(ub);
         model.remove(lb);
-        model.update();
       } else {
         uu = mid;
-        std::cerr << " SAT" << std::endl;
         model.remove(ub);
         model.remove(lb);
-        model.update();
       }
     }
-    std::cerr << root.to_string() << " ul: " << uu << " uu: " << u << std::endl;
 
     double ll = u;
     while ((ll - l) > eps) {
       double mid = (l + ll) / 2.0;
-      std::cerr << root.to_string() << " ll: " << l << " mid: " << mid
-                << " lu: " << ll;
       auto ub = model.addConstr(expr, GRB_LESS_EQUAL, mid);
       auto lb = model.addConstr(expr, GRB_GREATER_EQUAL, l);
       model.optimize();
       if (model.get(GRB_IntAttr_Status) == GRB_INFEASIBLE) {
         l = mid;
-        std::cerr << " UNSAT" << std::endl;
         model.remove(ub);
         model.remove(lb);
-        model.update();
       } else {
         ll = mid;
-        std::cerr << " SAT" << std::endl;
         model.remove(ub);
         model.remove(lb);
-        model.update();
       }
     }
-    std::cerr << root.to_string() << " ll: " << l << " lu: " << ll << std::endl;
 
     relation_map[root] = Probability(l, u);
   }

@@ -41,6 +41,7 @@ private:
   std::map<Relation, depclassid_t> dependent_class_map;
   std::map<std::pair<Relation, Relation>, Probability> dependent_map;
   std::set<std::string> queries;
+  std::set<Relation> facts;
   bool is_legacy{false};
 
   std::set<Relation> dfs(Derivation &derivation, std::set<Derivation *> &visited,
