@@ -8,8 +8,8 @@
 
 class Analysis {
 public:
-  void calculate_probability();
-  void calculate_probability_legacy();
+  void calculate_probability(bool is_refined);
+  void calculate_probability_legacy(bool is_refined);
   void dump(const std::optional<std::string> &path) const;
 
 public:

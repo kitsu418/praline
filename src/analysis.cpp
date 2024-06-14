@@ -44,7 +44,7 @@ enum Operation {
   kDisjunction,
 };
 
-void Analysis::calculate_probability_legacy() {
+void Analysis::calculate_probability_legacy(bool is_refined) {
   bool fixed = false;
   std::map<std::pair<Relation, std::vector<Relation>>, std::vector<size_t>>
       rule_unknown_map{};
@@ -117,9 +117,12 @@ void Analysis::calculate_probability_legacy() {
     }
   }
   solve_unknowns();
+  if (is_refined) {
+    refine();
+  }
 }
 
-void Analysis::calculate_probability() {
+void Analysis::calculate_probability(bool is_refined) {
   int node_num = 0;
   int edge_num = 0;
   for (const auto &derivation : derivations) {
@@ -339,7 +342,9 @@ void Analysis::calculate_probability() {
     }
   }
   solve_unknowns();
-  refine();
+  if (is_refined) {
+    refine();
+  }
 }
 
 void Analysis::dump(const std::optional<std::string> &path) const {

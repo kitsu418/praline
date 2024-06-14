@@ -9,6 +9,7 @@
 int main(int argc, char **argv) {
   int opt;
   bool is_legacy = false;
+  bool is_refined = false;
   std::optional<std::string> derivation_path, probability_path, output_path;
 
   auto print_helper_text = [&argv]() {
@@ -17,7 +18,7 @@ int main(int argc, char **argv) {
               << std::endl;
   };
 
-  while ((opt = getopt(argc, argv, "hd:p:o:l")) != -1) {
+  while ((opt = getopt(argc, argv, "hd:p:o:lr")) != -1) {
     switch (opt) {
     case 'd':
       derivation_path = std::string(optarg);
@@ -30,6 +31,9 @@ int main(int argc, char **argv) {
       break;
     case 'l':
       is_legacy = true;
+      break;
+    case 'r':
+      is_refined = true;
       break;
     default:
       print_helper_text();
@@ -45,9 +49,9 @@ int main(int argc, char **argv) {
   auto analysis = new Analysis(derivation_path.value(),
                                probability_path.value(), is_legacy);
   if (is_legacy) {
-    analysis->calculate_probability_legacy();
+    analysis->calculate_probability_legacy(is_refined);
   } else {
-    analysis->calculate_probability();
+    analysis->calculate_probability(is_refined);
   }
   analysis->dump(output_path);
   delete analysis;

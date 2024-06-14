@@ -62,8 +62,7 @@ Probability Probability::ind_disj(const Probability &other) const {
 std::tuple<std::map<Relation, Probability>, std::map<Rule, Probability>,
            std::map<Relation, depclassid_t>,
            std::map<std::pair<Relation, Relation>, Probability>,
-           std::set<std::string>,
-           std::set<Relation>>
+           std::set<std::string>, std::set<Relation>>
 Probability::load(const std::string &path, const bool &is_legacy) {
   std::ifstream ifs(path);
   if (!ifs.is_open()) {
@@ -133,10 +132,10 @@ Probability::load(const std::string &path, const bool &is_legacy) {
         parse_attributes(terms[2], attrs);
         auto relation = Relation(terms[1], std::move(attrs));
         relation_map[relation] = std::move(parse_probability(terms[3]));
+        facts.insert(relation);
         if (!is_legacy) {
           auto depclass_id = std::stoul(terms[4]);
           dependent_class_map[relation] = depclass_id;
-          facts.insert(relation);
         }
       } else {
         if (terms.size() != 4) {
@@ -169,8 +168,8 @@ Probability::load(const std::string &path, const bool &is_legacy) {
   ifs.close();
   return std::move(std::make_tuple(std::move(relation_map), std::move(rule_map),
                                    std::move(dependent_class_map),
-                                   std::move(dependent_map),
-                                   std::move(queries), std::move(facts)));
+                                   std::move(dependent_map), std::move(queries),
+                                   std::move(facts)));
 }
 
 std::string Probability::to_string() const {
