@@ -123,17 +123,6 @@ void Analysis::calculate_probability_legacy(bool is_refined) {
 }
 
 void Analysis::calculate_probability(bool is_refined) {
-  int node_num = 0;
-  int edge_num = 0;
-  for (const auto &derivation : derivations) {
-    node_num++;
-    for (auto &body : derivation.bodies) {
-      edge_num += body.size();
-    }
-    // edge_num += derivation.bodies.size();
-  }
-  // std::cerr << "node_num: " << node_num << std::endl;
-  // std::cerr << "edge_num: " << edge_num << std::endl;
   bool fixed = false;
   std::map<std::pair<Relation, std::vector<Relation>>, std::vector<size_t>>
       rule_unknown_map{};
@@ -558,6 +547,10 @@ void Analysis::refine() {
         auto relation = current.first;
         auto depth = current.second;
 
+        if (depth > DEPTH_LIMIT) {
+          return;
+        }
+
         if (depth == DEPTH_LIMIT ||
             (depth < DEPTH_LIMIT &&
              (facts.contains(relation) ||
@@ -565,7 +558,13 @@ void Analysis::refine() {
           if (!collected.contains(relation)) {
             collected[relation] = cnt++;
           }
-        } else if (depth < DEPTH_LIMIT) {
+        }
+
+        if (depth == DEPTH_LIMIT || !derivations_index.contains(relation)) {
+          return;
+        }
+
+        if (depth < DEPTH_LIMIT) {
           for (const auto &body : derivations_index[relation]->bodies) {
             for (const auto &r : body) {
               collect({r, depth + 1}, collected, cnt);
@@ -618,26 +617,20 @@ void Analysis::refine() {
           auto relation = current.first;
           auto depth = current.second;
 
-          if (facts_id.contains(relation)) {
+          if (facts_id.contains(relation) && depth > 0) {
             // This is the fact case
             state_t mask = (1ull << facts_id[relation]);
-            GRBLinExpr expr = 0;
             std::map<state_t, double> constraints{};
 
             for (state_t state = mask; state < (1ull << facts_num); ++state) {
               if ((state & mask)) {
-                expr += variables[state];
                 constraints[state] = 1.0;
               }
             }
 
-            model.addConstr(expr, GRB_GREATER_EQUAL,
-                            relation_map[relation].lower_bound);
-            model.addConstr(expr, GRB_LESS_EQUAL,
-                            relation_map[relation].upper_bound);
-
             return constraints;
-          } else if (depth < DEPTH_LIMIT) {
+          } else if (depth < DEPTH_LIMIT &&
+                     derivations_index.contains(relation)) {
             std::map<state_t, double> states{};
 
             for (size_t i = 0; i < derivations_index[relation]->bodies.size();
@@ -691,6 +684,64 @@ void Analysis::refine() {
           }
         };
 
+    for (const auto &fact_id : facts_id) {
+      state_t mask = (1ull << fact_id.second);
+      GRBLinExpr expr = 0;
+
+      for (state_t state = mask; state < (1ull << facts_num); ++state) {
+        if ((state & mask)) {
+          expr += variables[state];
+        }
+      }
+
+      model.addConstr(expr, GRB_GREATER_EQUAL,
+                      relation_map[fact_id.first].lower_bound);
+      model.addConstr(expr, GRB_LESS_EQUAL,
+                      relation_map[fact_id.first].upper_bound);
+
+      if (derivations_index.contains(fact_id.first)) {
+        for (const auto &body : derivations_index[fact_id.first]->bodies) {
+          auto rule_p = get_rule_probability(fact_id.first, body);
+          if (!rule_p.has_value()) {
+            continue;
+          }
+
+          state_t rhs_mask = 0;
+          bool valid = true;
+
+          for (const auto &relation : body) {
+            if (facts_id.contains(relation)) {
+              rhs_mask |= (1ull << facts_id[relation]);
+            } else {
+              valid = false;
+              break;
+            }
+          }
+
+          if (valid) {
+            GRBLinExpr lhs = 0;
+            GRBLinExpr rhs = 0;
+
+            for (state_t state = rhs_mask; state < (1ull << facts_num);
+                 ++state) {
+              if ((state & rhs_mask) == rhs_mask) {
+                rhs += variables[state] * rule_p->lower_bound;
+              }
+            }
+
+            rhs_mask |= (1ull << fact_id.second);
+            for (state_t state = rhs_mask; state < (1ull << facts_num);
+                 ++state) {
+              if ((state & rhs_mask) == rhs_mask) {
+                lhs += variables[state];
+              }
+            }
+            model.addConstr(lhs, GRB_EQUAL, rhs);
+          }
+        }
+      }
+    }
+
     std::map<state_t, double> root_status = add_constraints({root, 0});
 
     if (root_status.empty()) {
@@ -743,4 +794,22 @@ void Analysis::refine() {
 
     relation_map[root] = Probability(l, u);
   }
+}
+
+void Analysis::print_statistics() const {
+  int node_num = 0;
+  int edge_num = 0;
+  for (const auto &derivation : derivations) {
+    node_num++;
+    for (auto &body : derivation.bodies) {
+      edge_num += body.size();
+    }
+  }
+  for (const auto &fact : facts) {
+    if (!derivations_index.contains(fact)) {
+      node_num++;
+    }
+  }
+  std::cout << "node_num: " << node_num << std::endl;
+  std::cout << "edge_num: " << edge_num << std::endl;
 }

@@ -11,6 +11,7 @@ public:
   void calculate_probability(bool is_refined);
   void calculate_probability_legacy(bool is_refined);
   void dump(const std::optional<std::string> &path) const;
+  void print_statistics() const;
 
 public:
   Analysis(const std::string &derivation_path,
